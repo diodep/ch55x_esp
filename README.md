@@ -27,7 +27,9 @@ M5Stack II.
 Build
 --------------
 
-Enter the src directory, and type "make"
+It requires make, sdcc and binutils.
+
+If you got all of them, enter the src directory, and type "make" to generate binary file.
 
 Programming
 --------------
