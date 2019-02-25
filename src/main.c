@@ -252,8 +252,7 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 							len = 2;
 							break;
 						default:
-							// len = 0xFF;
-							len = 0;								 									 /*命令不支持*/
+							len = 0xFF;	 /*命令不支持*/
 							break;
 						}
 					}
@@ -262,6 +261,14 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 						//写
 						switch( SetupReq )
 						{
+						case 0x02:
+						case 0x04:
+						case 0x06:
+						case 0x07:
+						case 0x0b:
+						case 0x92:
+							len = 0;
+							break;
 						case 0x91: //WRITE EEPROM, FT_PROG动作,直接跳转BL
 							Require_DFU = 1;
 							len = 0;
@@ -276,6 +283,9 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 							break;
 						case 0x03:
 							//divisor = wValue
+							PCON |= SMOD; //波特率加倍
+							T2MOD |= bTMR_CLK; //最高计数时钟
+
 							divisor = UsbSetupBuf->wValueL |
 								(UsbSetupBuf->wValueH << 8);
 							divisor &= 0x3fff; //没法发生小数取整数部分，baudrate = 48M/16/divisor
@@ -288,7 +298,18 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 								divisor = divisor / 2; //24M CPU时钟
 								if(divisor > 256)
 								{
-									TH1 = 0 - 13; //统统115200
+									//TH1 = 0 - 13; //统统115200
+                                    divisor /= 8;
+                                    if(divisor > 256)
+									{
+										TH1 = 0 - 13;
+									}
+									else
+									{
+										PCON &= ~(SMOD);
+										T2MOD &= ~(bTMR_CLK); //低波特率
+										TH1 = 0 - divisor;
+									}
 								}
 								else
 								{
@@ -331,8 +352,7 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 							len = 0;
 							break;
 						default:
-							// len = 0xFF;
-							len = 0;								 									 /*命令不支持*/
+							len = 0xFF;		 /*命令不支持*/
 							break;
 						}
 					}
