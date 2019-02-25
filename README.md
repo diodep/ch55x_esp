@@ -8,15 +8,14 @@ It also can automatically detect ESP32 bootloader message, force it enter ISP mo
 Issues
 --------------
 
-Baudrate range: 5859bps - 750Kbps.
+Baudrate range: 5859bps - 1.5Mbps
 
-Warning: Due to slow 8051-based CPU and SDCC's interrupt handler code generation policy, it can't receive properly at 1.5Mbps.
 
 USB endpoints are not configured as ping-pong mode, it makes it even slower. The real performance of this dongle is about 657Kbps, measured by esptool.
 
 Warning: High baudrate is not accurate at all, 115200 is the last traditional baudrate that it supports. For higher baudrate, please use 250Kbps, 500Kbps, 750Kbps.
 
-So, my advice is... Don't use this puppy to make USB to Serial Bridge? CH330, CH340, HT42B534 and GD32F150/STM32F103're better choice than CH55x series MCU. Optimizing this code is just like real hell working.
+So, my advice is... Don't use this puppy to make USB to Serial Bridge? CH330, CH340, HT42B534 and GD32F150/STM32F103're better choice than CH55x series MCU. Optimizing this code (by rewritten it in assembly) is just like real hell working.
 
 
 Boards
