@@ -73,6 +73,10 @@ volatile __idata uint16_t SOF_Count = 0;
 volatile __idata uint8_t Latency_Timer = 4; //Latency Timer
 volatile __idata uint8_t Require_DFU = 0;
 
+/* 流控 */
+volatile __idata uint8_t soft_dtr = 0;
+volatile __idata uint8_t soft_rts = 0;
+
 #define HARD_ESP_CTRL 1
 
 #ifndef HARD_ESP_CTRL
@@ -117,7 +121,7 @@ void Jump_to_BL()
 	while(1)
 	{
 		__asm
-			LJMP 0x3800
+		LJMP 0x3800
 		__endasm;
 	}
 }
@@ -287,7 +291,7 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 							T2MOD |= bTMR_CLK; //最高计数时钟
 
 							divisor = UsbSetupBuf->wValueL |
-								(UsbSetupBuf->wValueH << 8);
+									  (UsbSetupBuf->wValueH << 8);
 							divisor &= 0x3fff; //没法发生小数取整数部分，baudrate = 48M/16/divisor
 							if(divisor == 0 || divisor == 1)
 							{
@@ -299,8 +303,8 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 								if(divisor > 256)
 								{
 									//TH1 = 0 - 13; //统统115200
-                                    divisor /= 8;
-                                    if(divisor > 256)
+									divisor /= 8;
+									if(divisor > 256)
 									{
 										TH1 = 0 - 13;
 									}
@@ -319,36 +323,56 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 							len = 0;
 							break;
 						case 0x01: //MODEM Control
-						#if HARD_ESP_CTRL
+#if HARD_ESP_CTRL
 							if(UsbSetupBuf->wValueH & 0x01)
 							{
 								if(UsbSetupBuf->wValueL & 0x01) //DTR
 								{
-									TXD1 = 0;
+									soft_dtr = 1;
 								}
 								else
 								{
-									TXD1 = 1;
+									soft_dtr = 0;
 								}
 							}
 							if(UsbSetupBuf->wValueH & 0x02)
 							{
 								if(UsbSetupBuf->wValueL & 0x02) //RTS
 								{
-									CAP1 = 0;
+									soft_rts = 1;
 								}
 								else
 								{
+									soft_rts = 0;
+								}
+								if(soft_dtr == 1 && soft_rts == 1)
+								{
+									TXD1 = 1;
+									CAP1 = 1;
+								}
+								if(soft_dtr == 0 && soft_rts == 0)
+								{
+									TXD1 = 1;
+									CAP1 = 1;
+								}
+								if(soft_dtr == 0 && soft_rts == 1)
+								{
+									TXD1 = 1;
+									CAP1 = 0;
+								}
+								if(soft_dtr == 1 && soft_rts == 0)
+								{
+									TXD1 = 0;
 									CAP1 = 1;
 								}
 							}
-						#else
+#else
 							if(Esp_Require_Reset == 3)
 							{
 								CAP1 = 0;
 								Esp_Require_Reset = 4;
 							}
-						#endif
+#endif
 							len = 0;
 							break;
 						default:
@@ -747,7 +771,8 @@ void Uart0_ISR(void) __interrupt (INT_NO_UART0) __using 1
 	if(RI)   //收到数据
 	{
 		if((WritePtr + 1) % sizeof(RingBuf) != ReadPtr)
-		{ //环形缓冲写
+		{
+			//环形缓冲写
 			RingBuf[WritePtr++] = SBUF;
 			WritePtr %= sizeof(RingBuf);
 		}
@@ -765,7 +790,7 @@ void Uart0_ISR(void) __interrupt (INT_NO_UART0) __using 1
 			uint8_t ch = Ep2Buffer[USBOutPtr];
 			SBUF = ch;
 			TI = 0;
-			#ifndef HARD_ESP_CTRL
+#ifndef HARD_ESP_CTRL
 			if(ESP_Boot_Sequence[Esp_Boot_Chk] == ch)
 				Esp_Boot_Chk ++;
 			else
@@ -777,7 +802,7 @@ void Uart0_ISR(void) __interrupt (INT_NO_UART0) __using 1
 					Esp_Require_Reset = 1;
 				Esp_Boot_Chk = 0;
 			}
-			#endif
+#endif
 			USBOutPtr++;
 		}
 	}
@@ -787,7 +812,7 @@ void Uart0_ISR(void) __interrupt (INT_NO_UART0) __using 1
 //汇编接收数据，选择寄存器组1，DPTR1 1.5M~150kHz~160 cycles
 void Uart0_ISR(void) __interrupt (INT_NO_UART0) __using 1 __naked
 {
-__asm
+	__asm
 	push psw ;2
 	push a
 	push _XBUS_AUX ;2
@@ -795,12 +820,12 @@ __asm
 	mov _XBUS_AUX, #0x01; 3 选择第二组DPTR
 
 ReadFromSerial:
-	jnb _RI, SendToSerial ; 7
+	jnb _RI, SendToSerial ;7
 
 	mov a, _WritePtr ;2
 	mov dpl, _ReadPtr
 
-	inc a ; 1
+	inc a ;1
 	anl dpl, #0x7f
 	anl a, #0x7f ;2
 
@@ -827,7 +852,7 @@ SendToSerial:
 	jc SerialTx
 
 UsbEpAck:
-	anl	_UEP2_CTRL,#0xf3
+	anl	_UEP2_CTRL, #0xf3
 	sjmp Tx_End
 SerialTx:
 	mov dph, #(_Ep2Buffer >> 8)
@@ -845,7 +870,7 @@ ISR_End:
 	pop a
 	pop psw
 	reti
-__endasm;
+	__endasm;
 }
 
 #endif
@@ -924,8 +949,8 @@ main()
 			{
 				//if(TH1 == 13)
 				//{
-					Esp_Require_Reset = 2;
-					Esp_Stage = SOF_Count;
+				Esp_Require_Reset = 2;
+				Esp_Stage = SOF_Count;
 				//}
 				//else
 				//{
