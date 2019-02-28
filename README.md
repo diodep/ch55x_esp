@@ -1,7 +1,7 @@
 Features
 ======
 
-A USB to Serial Converter firmware using FTDI FT232BM protocol. 
+A USB to Serial Converter firmware.
 
 It also can automatically detect ESP32 bootloader flow control message, and it will never hurts normal mode (If the host program sets RTS and DTR both high or low, the firmware will force those pins all high).
 
