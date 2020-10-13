@@ -13,6 +13,15 @@
 #include <ch554_usb.h>
 #include <debug.h>
 
+/*
+ * Use T0 to count the SOF_Count every 1ms
+ * If you doesn't like this feature, define SOF_NO_TIMER
+ * Background: The usb host must to send SOF every 1ms, but some USB host don't really do that
+ * FTDI's driver has some bug, if it doesn't received empty packet with modem status,
+ * it will causes BSoD, so highly recommended use T0 instead of SOF packet to generate empty packet report.
+ */
+//#define SOF_NO_TIMER
+
 __xdata __at (0x0000) uint8_t  Ep0Buffer[DEFAULT_ENDP0_SIZE];	   //端点0 OUT&IN缓冲区，必须是偶地址
 __xdata __at (0x0040) uint8_t  Ep1Buffer[MAX_PACKET_SIZE];		//端点1 IN 发送缓冲区
 __xdata __at (0x0200) uint8_t  Ep2Buffer[MAX_PACKET_SIZE];	  //端点2 OUT接收缓冲区
@@ -204,7 +213,9 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 	uint16_t divisor;
 	if ((USB_INT_ST & MASK_UIS_TOKEN) == UIS_TOKEN_SOF)
 	{
+#ifdef SOF_NO_TIMER
 		SOF_Count ++;
+#endif /* SOF_NO_TIMER */
 	}
 	if(UIF_TRANSFER)															//USB传输完成标志
 	{
@@ -875,6 +886,210 @@ ISR_End:
 
 #endif
 
+
+//定义函数返回值
+#ifndef  SUCCESS
+#define  SUCCESS  0
+#endif
+#ifndef  FAIL
+#define  FAIL    0xFF
+#endif
+
+//定义定时器起始
+#ifndef  START
+#define  START  1
+#endif
+#ifndef  STOP
+#define  STOP    0
+#endif
+
+//CH554 Timer0时钟选择   
+//bTMR_CLK同时影响Timer0&1&2,使用时要注意 (除定时使用标准时钟)            
+#define mTimer0Clk12DivFsys( ) (T2MOD &= ~bT0_CLK)                          //定时器,时钟=Fsys/12 T0标准时钟
+#define mTimer0ClkFsys( )      (T2MOD |= bTMR_CLK | bT0_CLK)                //定时器,时钟=Fsys
+#define mTimer0Clk4DivFsys( )  (T2MOD &= ~bTMR_CLK;T2MOD |=  bT0_CLK)       //定时器,时钟=Fsys/4
+#define mTimer0CountClk( )     (TMOD |= bT0_CT)                             //计数器,T0引脚的下降沿有效
+
+//CH554 Timer0 开始(SS=1)/结束(SS=0)
+#define mTimer0RunCTL( SS )    (TR0 = SS ? START : STOP)
+
+
+#define mTimer1Clk12DivFsys( ) (T2MOD &= ~bT1_CLK)                          //定时器,时钟=Fsys/12  T1标准时钟
+#define mTimer1ClkFsys( )      (T2MOD |= bTMR_CLK | bT1_CLK)                //定时器,时钟=Fsys
+#define mTimer1Clk4DivFsys( )  (T2MOD &= ~bTMR_CLK;T2MOD |=  bT1_CLK)       //定时器,时钟=Fsys/4
+#define mTimer1CountClk( )     (TMOD |= bT1_CT)                             //计数器,T0引脚的下降沿有效
+
+//CH554 Timer1 开始(SS=1)/结束(SS=0)
+#define mTimer1RunCTL( SS )    (TR1 = SS ? START : STOP)
+
+
+#define mTimer2Clk12DivFsys( ) {T2MOD &= ~ bT2_CLK;C_T2 = 0;}      //定时器,时钟=Fsys/12 T2标准时钟
+#define mTimer2ClkFsys( )      {T2MOD |= (bTMR_CLK | bT2_CLK);C_T2=0;}         //定时器,时钟=Fsys
+#define mTimer2Clk4DivFsys( )  {T2MOD &= ~bTMR_CLK;T2MOD |=  bT2_CLK;C_T2 = 0;}//定时器,时钟=Fsys/4
+#define mTimer2CountClk( )     {C_T2 = 1;}                                     //计数器,T2引脚的下降沿有效
+
+//CH554 Timer2 开始(SS=1)/结束(SS=0)
+#define mTimer2RunCTL( SS )    {TR2 = SS ? START : STOP;}
+#define mTimer2OutCTL( )       (T2MOD |= T2OE)                               //T2输出  频率TF2/2   
+#define CAP1Alter( )           (PIN_FUNC |= bT2_PIN_X;)                      //CAP1由P10 映射到P14
+#define CAP2Alter( )           (PIN_FUNC |= bT2EX_PIN_X;)                    //CAP2由P11 映射RST
+
+/*******************************************************************************
+* Function Name  : mTimer_x_ModInit(uint8_t x ,uint8_t mode)
+* Description    : CH554定时计数器x模式设置
+* Input          : uint8_t mode,Timer模式选择
+                   0：模式0，13位定时器，TLn的高3位无效
+                   1：模式1，16位定时器
+                   2：模式2，8位自动重装定时器
+                   3：模式3，两个8位定时器  Timer0
+                   3：模式3，Timer1停止		
+                   uint8_t x 定时器  0 1 2
+* Output         : None
+* Return         : 成功  SUCCESS
+                   失败  FAIL
+*******************************************************************************/
+uint8_t mTimer_x_ModInit(uint8_t x ,uint8_t mode);
+
+/*******************************************************************************
+* Function Name  : mTimer_x_SetData(uint8_t x,uint16_t dat)
+* Description    : CH554Timer 
+* Input          : uint16_t dat;定时器赋值
+                   uint8_t x 定时器  0 1 2
+* Output         : None
+* Return         : None
+*******************************************************************************/
+void mTimer_x_SetData(uint8_t x,uint16_t dat);
+
+/*******************************************************************************
+* Function Name  : CAP2Init(uint8_t mode)
+* Description    : CH554定时计数器2 T2EX引脚捕捉功能初始化
+                   uint8_t mode,边沿捕捉模式选择
+                   0:T2ex从下降沿到下一个下降沿
+                   1:T2ex任意边沿之间
+                   3:T2ex从上升沿到下一个上升沿
+* Input          : None
+* Output         : None
+* Return         : None
+*******************************************************************************/
+void CAP2Init(uint8_t mode);
+
+/*******************************************************************************
+* Function Name  : CAP1Init(uint8_t mode)
+* Description    : CH554定时计数器2 T2引脚捕捉功能初始化T2
+                   uint8_t mode,边沿捕捉模式选择
+                   0:T2ex从下降沿到下一个下降沿
+                   1:T2ex任意边沿之间
+                   3:T2ex从上升沿到下一个上升沿
+* Input          : None
+* Output         : None
+* Return         : None
+*******************************************************************************/
+void CAP1Init(uint8_t mode);
+
+/*******************************************************************************
+* Function Name  : mTimer_x_ModInit(uint8_t x ,uint8_t mode)
+* Description    : CH554定时计数器x模式设置
+* Input          : uint8_t mode,Timer模式选择
+                   0：模式0，13位定时器，TLn的高3位无效
+                   1：模式1，16位定时器
+                   2：模式2，8位自动重装定时器
+                   3：模式3，两个8位定时器  Timer0
+                   3：模式3，Timer1停止									 
+* Output         : None
+* Return         : 成功  SUCCESS
+                   失败  FAIL
+*******************************************************************************/
+uint8_t mTimer_x_ModInit(uint8_t x ,uint8_t mode)
+{
+    if(x == 0){TMOD = TMOD & 0xf0 | mode;}
+    else if(x == 1){TMOD = TMOD & 0x0f | (mode<<4);}
+    else if(x == 2){RCLK = 0;TCLK = 0;CP_RL2 = 0;}                               //16位自动重载定时器
+    else return FAIL;
+    return SUCCESS;
+}
+
+/*******************************************************************************
+* Function Name  : mTimer_x_SetData(uint8_t x,uint16_t dat)
+* Description    : CH554Timer0 TH0和TL0赋值
+* Input          : uint16_t dat;定时器赋值
+* Output         : None
+* Return         : None
+*******************************************************************************/
+void mTimer_x_SetData(uint8_t x,uint16_t dat)
+{
+    uint16_t tmp;
+    tmp = 65536 - dat;	
+		if(x == 0){TL0 = tmp & 0xff;TH0 = (tmp>>8) & 0xff;}
+		else if(x == 1){TL1 = tmp & 0xff;TH1 = (tmp>>8) & 0xff;}
+		else if(x == 2){
+      RCAP2L = TL2 = tmp & 0xff;                                               //16位自动重载定时器
+      RCAP2H = TH2 = (tmp>>8) & 0xff;
+    }                                                 
+}
+
+/*******************************************************************************
+* Function Name  : CAP2Init(uint8_t mode)
+* Description    : CH554定时计数器2 T2EX引脚捕捉功能初始化
+                   uint8_t mode,边沿捕捉模式选择
+                   0:T2ex从下降沿到下一个下降沿
+                   1:T2ex任意边沿之间
+                   3:T2ex从上升沿到下一个上升沿
+* Input          : None
+* Output         : None
+* Return         : None
+*******************************************************************************/
+void CAP2Init(uint8_t mode)
+{
+    RCLK = 0;
+    TCLK = 0;	
+    C_T2  = 0;
+    EXEN2 = 1; 
+    CP_RL2 = 1;                                                                //启动T2ex的捕捉功能
+    T2MOD |= mode << 2;                                                        //边沿捕捉模式选择
+}
+
+/*******************************************************************************
+* Function Name  : CAP1Init(uint8_t mode)
+* Description    : CH554定时计数器2 T2引脚捕捉功能初始化T2
+                   uint8_t mode,边沿捕捉模式选择
+                   0:T2ex从下降沿到下一个下降沿
+                   1:T2ex任意边沿之间
+                   3:T2ex从上升沿到下一个上升沿
+* Input          : None
+* Output         : None
+* Return         : None
+*******************************************************************************/
+void CAP1Init(uint8_t mode)
+{
+    RCLK = 0;
+    TCLK = 0;
+    CP_RL2 = 1;
+    C_T2 = 0;
+    T2MOD = T2MOD & ~T2OE | (mode << 2) | bT2_CAP1_EN;                         //使能T2引脚捕捉功能,边沿捕捉模式选择
+}
+
+
+/*******************************************************************************
+* Function Name  : mTimer0Interrupt()
+* Description    : CH554定时计数器0定时计数器中断处理函数
+*******************************************************************************/
+void mTimer0Interrupt(void) __interrupt (INT_NO_TMR0)                          //timer0中断服务程序
+{
+    mTimer_x_SetData(0,1000);                                                  //非自动重载方式需重新给TH0和TL0赋值,1MHz/1000=1000Hz, 1ms
+    SOF_Count ++;
+}
+
+void init_timer() {
+    mTimer0Clk12DivFsys();	                                                   //T0定时器时钟设置,12MHz/12=1MHz
+    mTimer_x_ModInit(0,1);                                                     //T0 定时器模式设置
+    mTimer_x_SetData(0,1000);	                                               //T0定时器赋值,1MHz/1000=1000Hz, 1ms
+    mTimer0RunCTL(1);                                                          //T0定时器启动	
+    ET0 = 1;                                                                   //T0定时器中断开启		
+    EA = 1;
+
+	SOF_Count = 0;
+}
+
 //主函数
 main()
 {
@@ -898,6 +1113,10 @@ main()
 	/* 预先填充 Modem Status */
 	Ep1Buffer[0] = 0x01;
 	Ep1Buffer[1] = 0x60;
+
+#ifndef SOF_NO_TIMER
+	init_timer();                                                              // 每1ms SOF_Count加1
+#endif 
 
 	while(1)
 	{
