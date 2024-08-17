@@ -761,8 +761,8 @@ void SerialPort_Config()
 
 //Ring Buf
 
-volatile __idata uint8_t WritePtr = 0;
-volatile __idata uint8_t ReadPtr = 0;
+volatile __data uint8_t WritePtr = 0;
+volatile __data uint8_t ReadPtr = 0;
 #ifndef HARD_ESP_CTRL
 __code uint8_t ESP_Boot_Sequence[] =
 {
